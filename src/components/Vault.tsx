@@ -284,7 +284,7 @@ export function Vault() {
                 <DropdownMenuItem onClick={() => signOut()}>{t("signOut")}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button size="sm" className="btn-grad" onClick={() => setMode("locked")}>
+            <Button size="sm" className="btn-grad" onClick={() => signOut()}>
               <Lock className="h-4 w-4 mr-1.5" /> {t("lock")}
             </Button>
           </div>
