@@ -141,10 +141,10 @@ export const dictionaries: Record<Lang, Dict> = {
   ar: { ...en, ...baseAr } as Dict,
 };
 
-export const I18nContext = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: (k: keyof typeof en) => string }>({
+export const I18nContext = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: (k: string) => string }>({
   lang: "en",
   setLang: () => {},
-  t: (k) => en[k] || (k as string),
+  t: (k) => en[k] || k,
 });
 
 export const useI18n = () => useContext(I18nContext);

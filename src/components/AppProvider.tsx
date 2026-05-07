@@ -88,7 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [lang],
   );
 
-  const i18n = useMemo(() => ({ lang, setLang, t: t as (k: never) => string }), [lang, setLang, t]);
+  const i18n = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
 
   const appValue: AppState = {
     session,
