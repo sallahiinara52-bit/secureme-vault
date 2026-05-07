@@ -1,12 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./AppProvider";
 import { useI18n, LANGS, Lang } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
-import { encryptBlob, decryptBlob, randomFileName } from "@/lib/crypto";
+import {
+  AlbumRow,
+  FileRow,
+  IntruderRow,
+  createAlbum,
+  decryptFile,
+  deleteAlbum,
+  deleteFileRow,
+  destroyVault,
+  encryptFile,
+  listAlbums,
+  listFiles,
+  listIntruders,
+  saveFile,
+  changePassword,
+  unlockVault,
+  updateFileAlbum,
+} from "@/lib/vault-db";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,21 +65,9 @@ import {
   ShieldAlert,
   Globe,
   Search as SearchIcon,
+  KeyRound,
 } from "lucide-react";
 import { AdSlot } from "./AdSlot";
-
-type Album = { id: string; name: string; color: string };
-type VFile = {
-  id: string;
-  name: string;
-  mime: string;
-  size: number;
-  storage_path: string;
-  iv: string;
-  salt: string;
-  album_id: string | null;
-  created_at: string;
-};
 
 function fmtSize(n: number) {
   if (n < 1024) return `${n} B`;
@@ -61,98 +83,66 @@ function iconFor(mime: string) {
 }
 
 export function Vault() {
-  const { session, passphrase, signOut } = useApp();
+  const { unlockKey, lock, autoLockMinutes, setAutoLockMinutes, setHasVault, setUnlockKey } = useApp();
   const { t, lang, setLang } = useI18n();
-  const isDecoy = false;
 
-  const [albums, setAlbums] = useState<Album[]>([]);
-  const [files, setFiles] = useState<VFile[]>([]);
+  const [albums, setAlbums] = useState<AlbumRow[]>([]);
+  const [files, setFiles] = useState<FileRow[]>([]);
   const [activeAlbum, setActiveAlbum] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [intruders, setIntruders] = useState<{ id: string; attempted_at: string }[]>([]);
+  const [intruders, setIntruders] = useState<IntruderRow[]>([]);
   const [showIntruders, setShowIntruders] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showChangePwd, setShowChangePwd] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<FileRow | null>(null);
+  const [confirmAlbumDelete, setConfirmAlbumDelete] = useState<AlbumRow | null>(null);
+  const [confirmLock, setConfirmLock] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState("");
-  const [preview, setPreview] = useState<{ file: VFile; url: string } | null>(null);
+  const [preview, setPreview] = useState<{ file: FileRow; url: string } | null>(null);
+
+  const [oldPwd, setOldPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [newPwd2, setNewPwd2] = useState("");
+  const [pwdBusy, setPwdBusy] = useState(false);
+
+  const [pendingMins, setPendingMins] = useState(autoLockMinutes);
+  useEffect(() => setPendingMins(autoLockMinutes), [autoLockMinutes]);
+
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
-    if (!session) return;
     setLoading(true);
-    const [{ data: a }, { data: f }] = await Promise.all([
-      supabase.from("albums").select("id,name,color").order("created_at", { ascending: true }),
-      supabase
-        .from("vault_files")
-        .select("id,name,mime,size,storage_path,iv,salt,album_id,created_at,is_decoy")
-        .eq("is_decoy", isDecoy)
-        .order("created_at", { ascending: false }),
-    ]);
-    setAlbums((a as Album[]) || []);
-    setFiles((f as VFile[]) || []);
+    const [a, f] = await Promise.all([listAlbums(), listFiles()]);
+    setAlbums(a);
+    setFiles(f);
     setLoading(false);
-  }, [session, isDecoy]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Auto sign-out after 5 min of background to keep vault private
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    function onVis() {
-      if (document.hidden) {
-        timer = setTimeout(() => {
-          if (document.hidden) signOut();
-        }, 5 * 60 * 1000);
-      } else if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    }
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      if (timer) clearTimeout(timer);
-    };
-  }, [signOut]);
-
   const visible = useMemo(() => {
     return files.filter((f) => {
-      if (activeAlbum && f.album_id !== activeAlbum) return false;
+      if (activeAlbum && f.albumId !== activeAlbum) return false;
       if (search && !f.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
   }, [files, activeAlbum, search]);
 
   async function handleUpload(list: FileList | null) {
-    if (!list || !list.length || !session || !passphrase) return;
+    if (!list || !list.length || !unlockKey) return;
     setUploading(true);
-    const items = Array.from(list);
     let ok = 0;
-    for (const file of items) {
+    for (const file of Array.from(list)) {
       try {
-        const buf = await file.arrayBuffer();
-        const { ciphertext, ivB64, saltB64 } = await encryptBlob(buf, passphrase);
-        const path = `${session.user.id}/${randomFileName()}.enc`;
-        const { error: upErr } = await supabase.storage.from("vault").upload(path, ciphertext, {
-          contentType: "application/octet-stream",
-          upsert: false,
-        });
-        if (upErr) throw upErr;
-        const { error: dbErr } = await supabase.from("vault_files").insert({
-          user_id: session.user.id,
-          album_id: activeAlbum,
-          name: file.name,
-          mime: file.type || "application/octet-stream",
-          size: file.size,
-          storage_path: path,
-          iv: ivB64,
-          salt: saltB64,
-          is_decoy: isDecoy,
-        });
-        if (dbErr) throw dbErr;
+        const row = await encryptFile(unlockKey, file);
+        row.albumId = activeAlbum;
+        await saveFile(row);
         ok++;
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Upload failed";
@@ -164,67 +154,104 @@ export function Vault() {
     load();
   }
 
-  async function decryptFile(f: VFile): Promise<Blob | null> {
-    if (!passphrase) return null;
-    const { data, error } = await supabase.storage.from("vault").download(f.storage_path);
-    if (error || !data) {
-      toast.error(error?.message || "Download failed");
-      return null;
-    }
+  async function openFile(f: FileRow) {
+    if (!unlockKey) return;
     try {
-      const buf = await data.arrayBuffer();
-      const plain = await decryptBlob(buf, passphrase, f.iv, f.salt);
-      return new Blob([plain], { type: f.mime });
+      const blob = await decryptFile(unlockKey, f);
+      const url = URL.createObjectURL(blob);
+      setPreview({ file: f, url });
     } catch {
       toast.error("Cannot decrypt");
-      return null;
     }
   }
 
-  async function openFile(f: VFile) {
-    const blob = await decryptFile(f);
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    setPreview({ file: f, url });
+  async function downloadFile(f: FileRow) {
+    if (!unlockKey) return;
+    try {
+      const blob = await decryptFile(unlockKey, f);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = f.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      toast.error("Cannot decrypt");
+    }
   }
 
-  async function downloadFile(f: VFile) {
-    const blob = await decryptFile(f);
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = f.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  async function deleteFile(f: VFile) {
-    if (!confirm(`${t("delete")}: ${f.name}?`)) return;
-    await supabase.storage.from("vault").remove([f.storage_path]);
-    await supabase.from("vault_files").delete().eq("id", f.id);
+  async function doDeleteFile() {
+    if (!confirmDelete) return;
+    await deleteFileRow(confirmDelete.id);
+    setConfirmDelete(null);
     toast.success(t("delete"));
     load();
   }
 
-  async function createAlbum() {
-    if (!session || !newAlbumName.trim()) return;
-    const colors = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
-    const color = colors[Math.floor(Math.random() * colors.length)];
-    await supabase.from("albums").insert({ user_id: session.user.id, name: newAlbumName.trim(), color });
+  async function doDeleteAlbum() {
+    if (!confirmAlbumDelete) return;
+    // unset album_id on contained files
+    const inAlbum = files.filter((f) => f.albumId === confirmAlbumDelete.id);
+    for (const f of inAlbum) await updateFileAlbum(f.id, null);
+    await deleteAlbum(confirmAlbumDelete.id);
+    if (activeAlbum === confirmAlbumDelete.id) setActiveAlbum(null);
+    setConfirmAlbumDelete(null);
+    load();
+  }
+
+  async function doCreateAlbum() {
+    if (!newAlbumName.trim()) return;
+    await createAlbum(newAlbumName.trim());
     setNewAlbumName("");
     setNewAlbumOpen(false);
     load();
   }
 
   async function loadIntruders() {
-    const { data } = await supabase
-      .from("intruder_logs")
-      .select("id,attempted_at")
-      .order("attempted_at", { ascending: false })
-      .limit(50);
-    setIntruders((data as { id: string; attempted_at: string }[]) || []);
+    setIntruders(await listIntruders());
     setShowIntruders(true);
+  }
+
+  async function doChangePwd() {
+    if (newPwd.length < 4) return toast.error("Min 4 chars");
+    if (newPwd !== newPwd2) return toast.error("Passwords do not match");
+    setPwdBusy(true);
+    try {
+      // Verify old password first
+      const ok = await unlockVault(oldPwd);
+      if (!ok) {
+        toast.error(t("wrongCode"));
+        return;
+      }
+      const success = await changePassword(oldPwd, newPwd);
+      if (success) {
+        toast.success("Password changed");
+        setShowChangePwd(false);
+        setOldPwd("");
+        setNewPwd("");
+        setNewPwd2("");
+        // Re-derive key for current session
+        const newKey = await unlockVault(newPwd);
+        if (newKey) setUnlockKey(newKey);
+      }
+    } finally {
+      setPwdBusy(false);
+    }
+  }
+
+  async function doReset() {
+    await destroyVault();
+    setConfirmReset(false);
+    setShowSettings(false);
+    setHasVault(false);
+    setUnlockKey(null);
+    toast.success("Vault destroyed");
+  }
+
+  async function saveSettings() {
+    await setAutoLockMinutes(pendingMins);
+    setShowSettings(false);
+    toast.success(t("save"));
   }
 
   return (
@@ -239,7 +266,7 @@ export function Vault() {
             <div className="leading-tight">
               <div className="text-sm font-semibold">{t("appName")}</div>
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                {isDecoy ? t("decoyVault") : t("vault")}
+                {t("vault")}
               </div>
             </div>
           </div>
@@ -270,34 +297,21 @@ export function Vault() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="icon" variant="ghost" aria-label={t("settings")}>
-                  <SettingsIcon className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={loadIntruders}>
-                  <ShieldAlert className="h-4 w-4 mr-2" /> {t("intruders")}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => signOut()}>{t("signOut")}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button size="sm" className="btn-grad" onClick={() => signOut()}>
+            <Button size="icon" variant="ghost" onClick={() => setShowSettings(true)} aria-label={t("settings")}>
+              <SettingsIcon className="h-4 w-4" />
+            </Button>
+            <Button size="sm" className="btn-grad" onClick={() => setConfirmLock(true)}>
               <Lock className="h-4 w-4 mr-1.5" /> {t("lock")}
             </Button>
           </div>
         </div>
       </header>
 
-      {/* Top AdMob banner slot */}
       <div className="max-w-5xl w-full mx-auto px-4 pt-3">
         <AdSlot position="top" />
       </div>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-5 grid md:grid-cols-[200px_1fr] gap-5">
-        {/* Albums sidebar */}
         <aside className="md:sticky md:top-20 self-start">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -321,25 +335,32 @@ export function Vault() {
               {t("all")} <span className="text-xs text-muted-foreground">({files.length})</span>
             </button>
             {albums.map((a) => {
-              const count = files.filter((f) => f.album_id === a.id).length;
+              const count = files.filter((f) => f.albumId === a.id).length;
               return (
-                <button
-                  key={a.id}
-                  onClick={() => setActiveAlbum(a.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
-                    activeAlbum === a.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                  }`}
-                >
-                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: a.color }} />
-                  <span className="flex-1 truncate">{a.name}</span>
-                  <span className="text-xs text-muted-foreground">{count}</span>
-                </button>
+                <div key={a.id} className="group flex items-center gap-1">
+                  <button
+                    onClick={() => setActiveAlbum(a.id)}
+                    className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition flex items-center gap-2 ${
+                      activeAlbum === a.id ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: a.color }} />
+                    <span className="flex-1 truncate">{a.name}</span>
+                    <span className="text-xs text-muted-foreground">{count}</span>
+                  </button>
+                  <button
+                    onClick={() => setConfirmAlbumDelete(a)}
+                    className="h-6 w-6 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition flex items-center justify-center"
+                    aria-label="Delete album"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
               );
             })}
           </div>
         </aside>
 
-        {/* Files grid */}
         <section>
           {loading ? (
             <div className="text-center py-20 text-muted-foreground text-sm">{t("loading")}</div>
@@ -386,8 +407,28 @@ export function Vault() {
                           <DropdownMenuItem onClick={() => downloadFile(f)}>
                             <Download className="h-4 w-4 mr-2" /> {t("download")}
                           </DropdownMenuItem>
+                          {albums.length > 0 && (
+                            <>
+                              <DropdownMenuSeparator />
+                              {albums.map((a) => (
+                                <DropdownMenuItem
+                                  key={a.id}
+                                  onClick={async () => {
+                                    await updateFileAlbum(f.id, a.id);
+                                    load();
+                                  }}
+                                >
+                                  <span
+                                    className="h-2 w-2 rounded-full mr-2"
+                                    style={{ backgroundColor: a.color }}
+                                  />{" "}
+                                  {a.name}
+                                </DropdownMenuItem>
+                              ))}
+                            </>
+                          )}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => deleteFile(f)} className="text-destructive">
+                          <DropdownMenuItem onClick={() => setConfirmDelete(f)} className="text-destructive">
                             <Trash2 className="h-4 w-4 mr-2" /> {t("delete")}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -401,7 +442,6 @@ export function Vault() {
         </section>
       </main>
 
-      {/* Bottom AdMob banner slot */}
       <div className="max-w-5xl w-full mx-auto px-4 pb-4">
         <AdSlot position="bottom" />
       </div>
@@ -411,7 +451,10 @@ export function Vault() {
         type="file"
         multiple
         className="hidden"
-        onChange={(e) => handleUpload(e.target.files)}
+        onChange={(e) => {
+          handleUpload(e.target.files);
+          if (fileInput.current) fileInput.current.value = "";
+        }}
       />
 
       {uploading && (
@@ -420,28 +463,91 @@ export function Vault() {
         </div>
       )}
 
-      {/* New album */}
-      <Dialog open={newAlbumOpen} onOpenChange={setNewAlbumOpen}>
-        <DialogContent className="sm:max-w-sm">
+      {/* Settings */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("newAlbum")}</DialogTitle>
+            <DialogTitle>{t("settings")}</DialogTitle>
+            <DialogDescription>Security & privacy</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label>{t("name")}</Label>
-            <Input value={newAlbumName} onChange={(e) => setNewAlbumName(e.target.value)} />
+          <div className="space-y-5 py-2">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Auto-lock</Label>
+                <span className="text-sm font-medium tabular-nums">{pendingMins} min</span>
+              </div>
+              <Slider
+                min={1}
+                max={10}
+                step={1}
+                value={[pendingMins]}
+                onValueChange={(v) => setPendingMins(v[0])}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Vault locks after {pendingMins} minute{pendingMins > 1 ? "s" : ""} of inactivity or background.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Button variant="outline" className="w-full justify-start" onClick={() => setShowChangePwd(true)}>
+                <KeyRound className="h-4 w-4 mr-2" /> {t("changeCode")}
+              </Button>
+              <Button variant="outline" className="w-full justify-start" onClick={loadIntruders}>
+                <ShieldAlert className="h-4 w-4 mr-2" /> {t("intruders")}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start text-destructive hover:text-destructive"
+                onClick={() => setConfirmReset(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" /> Erase vault
+              </Button>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setNewAlbumOpen(false)}>
+            <Button variant="ghost" onClick={() => setShowSettings(false)}>
               {t("cancel")}
             </Button>
-            <Button className="btn-grad" onClick={createAlbum}>
+            <Button className="btn-grad" onClick={saveSettings}>
               {t("save")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Intruder log */}
+      {/* Change password */}
+      <Dialog open={showChangePwd} onOpenChange={setShowChangePwd}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("changeCode")}</DialogTitle>
+            <DialogDescription>All files will be re-encrypted.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Current password</Label>
+              <Input type="password" value={oldPwd} onChange={(e) => setOldPwd(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>New password</Label>
+              <Input type="password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Confirm new password</Label>
+              <Input type="password" value={newPwd2} onChange={(e) => setNewPwd2(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowChangePwd(false)}>
+              {t("cancel")}
+            </Button>
+            <Button className="btn-grad" onClick={doChangePwd} disabled={pwdBusy}>
+              {pwdBusy ? "…" : t("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Intruders */}
       <Dialog open={showIntruders} onOpenChange={setShowIntruders}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -452,8 +558,13 @@ export function Vault() {
           ) : (
             <ul className="text-sm space-y-1 max-h-72 overflow-auto">
               {intruders.map((i) => (
-                <li key={i.id} className="flex items-center justify-between border-b border-border/40 py-1.5">
-                  <span className="text-muted-foreground">{new Date(i.attempted_at).toLocaleString()}</span>
+                <li
+                  key={i.id}
+                  className="flex items-center justify-between border-b border-border/40 py-1.5"
+                >
+                  <span className="text-muted-foreground">
+                    {new Date(i.attemptedAt).toLocaleString()}
+                  </span>
                   <ShieldAlert className="h-4 w-4 text-destructive" />
                 </li>
               ))}
@@ -461,6 +572,111 @@ export function Vault() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* New album */}
+      <Dialog open={newAlbumOpen} onOpenChange={setNewAlbumOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("newAlbum")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>{t("name")}</Label>
+            <Input value={newAlbumName} onChange={(e) => setNewAlbumName(e.target.value)} autoFocus />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNewAlbumOpen(false)}>
+              {t("cancel")}
+            </Button>
+            <Button className="btn-grad" onClick={doCreateAlbum}>
+              {t("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm: lock now */}
+      <AlertDialog open={confirmLock} onOpenChange={setConfirmLock}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("lock")}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You'll need to enter your password again to unlock.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => lock()}>{t("lock")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm: delete file */}
+      <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("delete")} {confirmDelete?.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doDeleteFile}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm: delete album */}
+      <AlertDialog
+        open={!!confirmAlbumDelete}
+        onOpenChange={(o) => !o && setConfirmAlbumDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("delete")} "{confirmAlbumDelete?.name}"?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Files in this album will not be deleted, only moved to "All".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doDeleteAlbum}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm: reset */}
+      <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Erase entire vault?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes ALL files, albums and the password. There is no recovery.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doReset}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Erase everything
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Preview */}
       <Dialog
