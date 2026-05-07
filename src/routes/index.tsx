@@ -1,14 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProvider, useApp } from "@/components/AppProvider";
-import { CalculatorGate } from "@/components/CalculatorGate";
+import { LoginScreen } from "@/components/LoginScreen";
 import { Vault } from "@/components/Vault";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Calculator" },
-      { name: "description", content: "Simple calculator." },
+      { title: "SecureVault Pro — Hide your photos, videos & files" },
+      {
+        name: "description",
+        content:
+          "Private encrypted vault for photos, videos and documents. AES-256 encryption. Multi-language.",
+      },
       { name: "robots", content: "noindex,nofollow" },
     ],
   }),
@@ -16,8 +20,26 @@ export const Route = createFileRoute("/")({
 });
 
 function Shell() {
-  const { mode } = useApp();
-  return mode === "locked" ? <CalculatorGate /> : <Vault />;
+  const { session, loading, passphrase, setPassphrase } = useApp();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground text-sm">
+        …
+      </div>
+    );
+  }
+
+  if (!session) return <LoginScreen />;
+
+  // Once logged in, derive an encryption passphrase from the user id.
+  // (RLS + Storage policies still scope all access to this user.)
+  if (!passphrase) {
+    setPassphrase(`svp:${session.user.id}`);
+    return null;
+  }
+
+  return <Vault />;
 }
 
 function Index() {
