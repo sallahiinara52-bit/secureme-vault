@@ -61,9 +61,9 @@ function iconFor(mime: string) {
 }
 
 export function Vault() {
-  const { session, mode, setMode, passphrase, signOut } = useApp();
+  const { session, passphrase, signOut } = useApp();
   const { t, lang, setLang } = useI18n();
-  const isDecoy = mode === "decoy";
+  const isDecoy = false;
 
   const [albums, setAlbums] = useState<Album[]>([]);
   const [files, setFiles] = useState<VFile[]>([]);
@@ -98,45 +98,25 @@ export function Vault() {
     load();
   }, [load]);
 
-  // Hide on tab switch / minimise
+  // Auto sign-out after 5 min of background to keep vault private
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     function onVis() {
       if (document.hidden) {
-        // soft lock back to calculator after 30s in background
-        setTimeout(() => {
-          if (document.hidden) setMode("locked");
-        }, 30_000);
+        timer = setTimeout(() => {
+          if (document.hidden) signOut();
+        }, 5 * 60 * 1000);
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = null;
       }
     }
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [setMode]);
-
-  // Shake to lock (desktop: Esc)
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setMode("locked");
-    }
-    let last = { x: 0, y: 0, z: 0, t: 0 };
-    function onMotion(e: DeviceMotionEvent) {
-      const a = e.accelerationIncludingGravity;
-      if (!a) return;
-      const now = Date.now();
-      if (now - last.t < 100) return;
-      const dx = (a.x || 0) - last.x;
-      const dy = (a.y || 0) - last.y;
-      const dz = (a.z || 0) - last.z;
-      const speed = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-      last = { x: a.x || 0, y: a.y || 0, z: a.z || 0, t: now };
-      if (speed > 35) setMode("locked");
-    }
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("devicemotion", onMotion);
     return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("devicemotion", onMotion);
+      document.removeEventListener("visibilitychange", onVis);
+      if (timer) clearTimeout(timer);
     };
-  }, [setMode]);
+  }, [signOut]);
 
   const visible = useMemo(() => {
     return files.filter((f) => {
