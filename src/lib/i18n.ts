@@ -133,12 +133,12 @@ const baseAr: Partial<Dict> = { tagline: "حاسبة من الخارج. خزنة
 export const dictionaries: Record<Lang, Dict> = {
   en,
   sq,
-  es: { ...en, ...baseEs },
-  de: { ...en, ...baseDe },
-  fr: { ...en, ...baseFr },
-  it: { ...en, ...baseIt },
-  tr: { ...en, ...baseTr },
-  ar: { ...en, ...baseAr },
+  es: { ...en, ...baseEs } as Dict,
+  de: { ...en, ...baseDe } as Dict,
+  fr: { ...en, ...baseFr } as Dict,
+  it: { ...en, ...baseIt } as Dict,
+  tr: { ...en, ...baseTr } as Dict,
+  ar: { ...en, ...baseAr } as Dict,
 };
 
 export const I18nContext = createContext<{ lang: Lang; setLang: (l: Lang) => void; t: (k: keyof typeof en) => string }>({
