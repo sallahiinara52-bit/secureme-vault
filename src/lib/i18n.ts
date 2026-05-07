@@ -14,6 +14,7 @@ export const LANGS: { code: Lang; label: string; flag: string }[] = [
 ];
 
 type Dict = Record<string, string>;
+type PartialDict = Partial<Dict>;
 
 const en: Dict = {
   appName: "SecureVault Pro",
