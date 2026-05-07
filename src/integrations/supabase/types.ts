@@ -14,7 +14,101 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      albums: {
+        Row: {
+          color: string
+          created_at: string
+          id: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          id?: string
+          name: string
+          user_id: string
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          id?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      intruder_logs: {
+        Row: {
+          attempted_at: string
+          id: string
+          image_path: string | null
+          user_id: string
+        }
+        Insert: {
+          attempted_at?: string
+          id?: string
+          image_path?: string | null
+          user_id: string
+        }
+        Update: {
+          attempted_at?: string
+          id?: string
+          image_path?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      vault_files: {
+        Row: {
+          album_id: string | null
+          created_at: string
+          id: string
+          is_decoy: boolean
+          iv: string
+          mime: string
+          name: string
+          salt: string
+          size: number
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          album_id?: string | null
+          created_at?: string
+          id?: string
+          is_decoy?: boolean
+          iv: string
+          mime: string
+          name: string
+          salt: string
+          size?: number
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          album_id?: string | null
+          created_at?: string
+          id?: string
+          is_decoy?: boolean
+          iv?: string
+          mime?: string
+          name?: string
+          salt?: string
+          size?: number
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vault_files_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
