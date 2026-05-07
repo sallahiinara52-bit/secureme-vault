@@ -1,45 +1,63 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useI18n, LANGS, Lang } from "@/lib/i18n";
-import { supabase } from "@/integrations/supabase/client";
+import { initializeVault, unlockVault, logIntruder } from "@/lib/vault-db";
+import { useApp } from "./AppProvider";
 import { toast } from "sonner";
-import { Shield, Lock, Mail, Eye, EyeOff, Globe } from "lucide-react";
+import { Shield, Lock, Eye, EyeOff } from "lucide-react";
 
-export function LoginScreen() {
+export function LockScreen() {
   const { t, lang, setLang } = useI18n();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
+  const { hasVault, setHasVault, setUnlockKey } = useApp();
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+
+  useEffect(() => {
+    setPassword("");
+    setConfirm("");
+  }, [hasVault]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (password.length < 6) {
-      toast.error("Password must be at least 6 characters");
+    if (busy) return;
+    if (password.length < 4) {
+      toast.error("Password must be at least 4 characters");
       return;
     }
     setBusy(true);
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/` },
-        });
-        if (error) throw error;
-        toast.success("Account created");
+      if (!hasVault) {
+        if (password !== confirm) {
+          toast.error("Passwords do not match");
+          return;
+        }
+        await initializeVault(password);
+        const key = await unlockVault(password);
+        if (key) {
+          setHasVault(true);
+          setUnlockKey(key);
+          toast.success("Vault created");
+        }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        const key = await unlockVault(password);
+        if (key) {
+          setUnlockKey(key);
+          setAttempts(0);
+        } else {
+          await logIntruder();
+          setAttempts((a) => a + 1);
+          toast.error(t("wrongCode"));
+        }
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error";
-      toast.error(msg);
     } finally {
       setBusy(false);
+      setPassword("");
+      setConfirm("");
     }
   }
 
@@ -72,33 +90,18 @@ export function LoginScreen() {
 
           <form onSubmit={submit} className="space-y-3">
             <div className="space-y-1.5">
-              <Label htmlFor="email">{t("email")}</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="email"
-                  type="email"
-                  required
-                  className="pl-9"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="password">{t("password")}</Label>
+              <Label htmlFor="password">{hasVault ? t("password") : t("realCode")}</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="password"
                   type={show ? "text" : "password"}
                   required
-                  minLength={6}
                   className="pl-9 pr-10"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  autoFocus
+                  autoComplete={hasVault ? "current-password" : "new-password"}
                 />
                 <button
                   type="button"
@@ -111,22 +114,34 @@ export function LoginScreen() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full btn-grad h-11 text-base" disabled={busy}>
-              {busy ? "…" : mode === "signup" ? t("create") : t("signIn")}
-            </Button>
+            {!hasVault && (
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm">Confirm</Label>
+                <Input
+                  id="confirm"
+                  type={show ? "text" : "password"}
+                  required
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                />
+              </div>
+            )}
 
-            <button
-              type="button"
-              className="text-xs text-muted-foreground w-full text-center hover:text-foreground pt-1"
-              onClick={() => setMode((m) => (m === "signup" ? "signin" : "signup"))}
-            >
-              {mode === "signup" ? t("alreadyHave") : t("noAccount")}
-            </button>
+            <Button type="submit" className="w-full btn-grad h-11 text-base" disabled={busy}>
+              {busy ? "…" : hasVault ? t("signIn") : t("create")}
+            </Button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-border/40 flex items-center justify-center gap-2 text-[11px] text-muted-foreground">
-            <Globe className="h-3 w-3" />
-            <span>End-to-end AES-256 encryption</span>
+          {hasVault && attempts >= 1 && (
+            <p className="text-[11px] text-destructive text-center mt-3">
+              {attempts} failed attempt{attempts > 1 ? "s" : ""} logged
+            </p>
+          )}
+
+          <div className="mt-6 pt-5 border-t border-border/40 text-center">
+            <p className="text-[11px] text-muted-foreground">
+              🔒 100% offline · AES-256 encryption · No email required
+            </p>
           </div>
         </div>
 
