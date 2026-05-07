@@ -1,24 +1,16 @@
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useState, createContext, useContext } from "react";
 import { I18nContext, Lang, dictionaries } from "@/lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session } from "@supabase/supabase-js";
 
-type Mode = "locked" | "real" | "decoy";
-
 type AppState = {
   session: Session | null;
   loading: boolean;
-  mode: Mode;
-  setMode: (m: Mode) => void;
-  realCode: string | null;
-  decoyCode: string | null;
   passphrase: string | null;
   setPassphrase: (p: string | null) => void;
-  saveCodes: (real: string, decoy: string) => void;
   signOut: () => Promise<void>;
 };
 
-import { createContext, useContext } from "react";
 const AppContext = createContext<AppState | null>(null);
 export const useApp = () => {
   const v = useContext(AppContext);
@@ -26,29 +18,21 @@ export const useApp = () => {
   return v;
 };
 
-const LS = {
-  lang: "svp.lang",
-  realCode: "svp.realCode",
-  decoyCode: "svp.decoyCode",
-};
+const LS = { lang: "svp.lang" };
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>("en");
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<Mode>("locked");
-  const [realCode, setRealCode] = useState<string | null>(null);
-  const [decoyCode, setDecoyCode] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState<string | null>(null);
 
   useEffect(() => {
     const storedLang = (localStorage.getItem(LS.lang) as Lang) || "en";
     setLangState(storedLang);
-    setRealCode(localStorage.getItem(LS.realCode));
-    setDecoyCode(localStorage.getItem(LS.decoyCode));
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
+      if (!s) setPassphrase(null);
     });
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -60,8 +44,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setLang = useCallback((l: Lang) => {
     setLangState(l);
     localStorage.setItem(LS.lang, l);
-    if (l === "ar") document.documentElement.dir = "rtl";
-    else document.documentElement.dir = "ltr";
   }, []);
 
   useEffect(() => {
@@ -69,18 +51,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = lang;
   }, [lang]);
 
-  const saveCodes = useCallback((real: string, decoy: string) => {
-    setRealCode(real);
-    setDecoyCode(decoy || null);
-    localStorage.setItem(LS.realCode, real);
-    if (decoy) localStorage.setItem(LS.decoyCode, decoy);
-    else localStorage.removeItem(LS.decoyCode);
-  }, []);
-
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    setMode("locked");
     setPassphrase(null);
+    await supabase.auth.signOut();
   }, []);
 
   const t = useCallback(
@@ -89,23 +62,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const i18n = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
-
-  const appValue: AppState = {
-    session,
-    loading,
-    mode,
-    setMode,
-    realCode,
-    decoyCode,
-    passphrase,
-    setPassphrase,
-    saveCodes,
-    signOut,
-  };
+  const value: AppState = { session, loading, passphrase, setPassphrase, signOut };
 
   return (
     <I18nContext.Provider value={i18n}>
-      <AppContext.Provider value={appValue}>{children}</AppContext.Provider>
+      <AppContext.Provider value={value}>{children}</AppContext.Provider>
     </I18nContext.Provider>
   );
 }
