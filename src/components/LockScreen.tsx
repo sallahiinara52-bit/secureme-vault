@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -145,9 +146,13 @@ export function LockScreen() {
           </div>
         </div>
 
-        <p className="text-center text-[11px] text-muted-foreground/70 mt-4">
-          © {new Date().getFullYear()} DS Interactive
-        </p>
+        <div className="text-center text-[11px] text-muted-foreground/70 mt-4 space-x-3">
+          <Link to="/privacy" className="hover:text-foreground">Privacy</Link>
+          <span>·</span>
+          <Link to="/terms" className="hover:text-foreground">Terms</Link>
+          <span>·</span>
+          <span>© {new Date().getFullYear()} DS Interactive</span>
+        </div>
       </div>
     </div>
   );
