@@ -66,8 +66,66 @@ import {
   Globe,
   Search as SearchIcon,
   KeyRound,
+  Share2,
+  Play,
 } from "lucide-react";
 import { AdSlot } from "./AdSlot";
+
+// In-memory thumbnail cache: id -> object URL of decrypted blob
+const thumbCache = new Map<string, string>();
+
+function Thumbnail({ file, unlockKey, onOpen }: { file: FileRow; unlockKey: CryptoKey; onOpen: () => void }) {
+  const isImg = file.mime.startsWith("image/");
+  const isVid = file.mime.startsWith("video/");
+  const [url, setUrl] = useState<string | null>(() => thumbCache.get(file.id) ?? null);
+  const Icon = iconFor(file.mime);
+
+  useEffect(() => {
+    if (!isImg && !isVid) return;
+    if (thumbCache.has(file.id)) {
+      setUrl(thumbCache.get(file.id)!);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const blob = await decryptFile(unlockKey, file);
+        const u = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        thumbCache.set(file.id, u);
+        setUrl(u);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, unlockKey, isImg, isVid]);
+
+  return (
+    <button
+      onClick={onOpen}
+      className="aspect-square rounded-lg bg-background/50 flex items-center justify-center overflow-hidden relative"
+    >
+      {isImg && url ? (
+        <img src={url} alt={file.name} className="w-full h-full object-cover" loading="lazy" />
+      ) : isVid && url ? (
+        <>
+          <video src={url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <Play className="h-8 w-8 text-white drop-shadow" fill="currentColor" />
+          </div>
+        </>
+      ) : (
+        <Icon className="h-8 w-8 text-muted-foreground" />
+      )}
+    </button>
+  );
+}
 
 function fmtSize(n: number) {
   if (n < 1024) return `${n} B`;
