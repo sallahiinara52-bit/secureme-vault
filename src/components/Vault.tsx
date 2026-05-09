@@ -788,7 +788,10 @@ export function Vault() {
                 )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="ghost" onClick={() => preview && shareFile(preview.file)}>
+              <Share2 className="h-4 w-4 mr-2" /> Share
+            </Button>
             <Button variant="ghost" onClick={() => preview && downloadFile(preview.file)}>
               <Download className="h-4 w-4 mr-2" /> {t("download")}
             </Button>
