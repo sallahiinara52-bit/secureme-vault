@@ -238,9 +238,34 @@ export function Vault() {
     }
   }
 
+  async function shareFile(f: FileRow) {
+    if (!unlockKey) return;
+    try {
+      const blob = await decryptFile(unlockKey, f);
+      const file = new File([blob], f.name, { type: f.mime || "application/octet-stream" });
+      const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+      if (nav.canShare && nav.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: f.name });
+        return;
+      }
+      // Fallback: open share via download
+      toast.info("Sharing not supported. File downloaded instead.");
+      downloadFile(f);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Share failed";
+      if (msg !== "AbortError") toast.error(msg);
+    }
+  }
+
   async function doDeleteFile() {
     if (!confirmDelete) return;
     await deleteFileRow(confirmDelete.id);
+    // Remove cached thumbnail URL
+    const u = thumbCache.get(confirmDelete.id);
+    if (u) {
+      URL.revokeObjectURL(u);
+      thumbCache.delete(confirmDelete.id);
+    }
     setConfirmDelete(null);
     toast.success(t("delete"));
     load();
