@@ -66,8 +66,66 @@ import {
   Globe,
   Search as SearchIcon,
   KeyRound,
+  Share2,
+  Play,
 } from "lucide-react";
 import { AdSlot } from "./AdSlot";
+
+// In-memory thumbnail cache: id -> object URL of decrypted blob
+const thumbCache = new Map<string, string>();
+
+function Thumbnail({ file, unlockKey, onOpen }: { file: FileRow; unlockKey: CryptoKey; onOpen: () => void }) {
+  const isImg = file.mime.startsWith("image/");
+  const isVid = file.mime.startsWith("video/");
+  const [url, setUrl] = useState<string | null>(() => thumbCache.get(file.id) ?? null);
+  const Icon = iconFor(file.mime);
+
+  useEffect(() => {
+    if (!isImg && !isVid) return;
+    if (thumbCache.has(file.id)) {
+      setUrl(thumbCache.get(file.id)!);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const blob = await decryptFile(unlockKey, file);
+        const u = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        thumbCache.set(file.id, u);
+        setUrl(u);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, unlockKey, isImg, isVid]);
+
+  return (
+    <button
+      onClick={onOpen}
+      className="aspect-square rounded-lg bg-background/50 flex items-center justify-center overflow-hidden relative"
+    >
+      {isImg && url ? (
+        <img src={url} alt={file.name} className="w-full h-full object-cover" loading="lazy" />
+      ) : isVid && url ? (
+        <>
+          <video src={url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <Play className="h-8 w-8 text-white drop-shadow" fill="currentColor" />
+          </div>
+        </>
+      ) : (
+        <Icon className="h-8 w-8 text-muted-foreground" />
+      )}
+    </button>
+  );
+}
 
 function fmtSize(n: number) {
   if (n < 1024) return `${n} B`;
@@ -180,9 +238,34 @@ export function Vault() {
     }
   }
 
+  async function shareFile(f: FileRow) {
+    if (!unlockKey) return;
+    try {
+      const blob = await decryptFile(unlockKey, f);
+      const file = new File([blob], f.name, { type: f.mime || "application/octet-stream" });
+      const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+      if (nav.canShare && nav.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: f.name });
+        return;
+      }
+      // Fallback: open share via download
+      toast.info("Sharing not supported. File downloaded instead.");
+      downloadFile(f);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Share failed";
+      if (msg !== "AbortError") toast.error(msg);
+    }
+  }
+
   async function doDeleteFile() {
     if (!confirmDelete) return;
     await deleteFileRow(confirmDelete.id);
+    // Remove cached thumbnail URL
+    const u = thumbCache.get(confirmDelete.id);
+    if (u) {
+      URL.revokeObjectURL(u);
+      thumbCache.delete(confirmDelete.id);
+    }
     setConfirmDelete(null);
     toast.success(t("delete"));
     load();
@@ -377,18 +460,12 @@ export function Vault() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {visible.map((f) => {
-                const Icon = iconFor(f.mime);
                 return (
                   <div
                     key={f.id}
                     className="group glass-card rounded-xl p-3 flex flex-col gap-2 hover:-translate-y-0.5 transition"
                   >
-                    <button
-                      onClick={() => openFile(f)}
-                      className="aspect-square rounded-lg bg-background/50 flex items-center justify-center"
-                    >
-                      <Icon className="h-8 w-8 text-muted-foreground group-hover:text-primary transition" />
-                    </button>
+                    {unlockKey && <Thumbnail file={f} unlockKey={unlockKey} onOpen={() => openFile(f)} />}
                     <div className="flex items-center gap-1">
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium truncate">{f.name}</div>
@@ -403,6 +480,9 @@ export function Vault() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openFile(f)}>
                             <Eye className="h-4 w-4 mr-2" /> {t("open")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => shareFile(f)}>
+                            <Share2 className="h-4 w-4 mr-2" /> Share
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => downloadFile(f)}>
                             <Download className="h-4 w-4 mr-2" /> {t("download")}
@@ -708,7 +788,10 @@ export function Vault() {
                 )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="ghost" onClick={() => preview && shareFile(preview.file)}>
+              <Share2 className="h-4 w-4 mr-2" /> Share
+            </Button>
             <Button variant="ghost" onClick={() => preview && downloadFile(preview.file)}>
               <Download className="h-4 w-4 mr-2" /> {t("download")}
             </Button>
