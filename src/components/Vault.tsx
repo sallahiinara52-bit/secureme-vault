@@ -460,18 +460,12 @@ export function Vault() {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {visible.map((f) => {
-                const Icon = iconFor(f.mime);
                 return (
                   <div
                     key={f.id}
                     className="group glass-card rounded-xl p-3 flex flex-col gap-2 hover:-translate-y-0.5 transition"
                   >
-                    <button
-                      onClick={() => openFile(f)}
-                      className="aspect-square rounded-lg bg-background/50 flex items-center justify-center"
-                    >
-                      <Icon className="h-8 w-8 text-muted-foreground group-hover:text-primary transition" />
-                    </button>
+                    {unlockKey && <Thumbnail file={f} unlockKey={unlockKey} onOpen={() => openFile(f)} />}
                     <div className="flex items-center gap-1">
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium truncate">{f.name}</div>
@@ -486,6 +480,9 @@ export function Vault() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openFile(f)}>
                             <Eye className="h-4 w-4 mr-2" /> {t("open")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => shareFile(f)}>
+                            <Share2 className="h-4 w-4 mr-2" /> Share
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => downloadFile(f)}>
                             <Download className="h-4 w-4 mr-2" /> {t("download")}
